@@ -1,8 +1,6 @@
 <?php
 namespace App\Http\Controllers\Traits;
 
-use SailWithMe\Exceptions\BaseException;
-
 trait BaseTrait
 {
     /**
@@ -27,7 +25,6 @@ trait BaseTrait
 
     /**
      * @param string $message
-     * @param array $headers
      * @param int $code
      * @return mixed
      */

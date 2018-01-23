@@ -255,7 +255,7 @@ class AuthenticationController extends BaseController
     }
 
     /**
-     * @param $referer
+     * @param $referer-
      * @return bool
      */
     private function isValidRefererDomain($referer)
