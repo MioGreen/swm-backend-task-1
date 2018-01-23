@@ -24,15 +24,18 @@ class AuthenticationController extends BaseController
         try {
             // attempt to verify the credentials and create a token for the user
             if (!$token = JWTAuth::attempt($credentials)) {
-                return $this->error('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
+                throw new JWTException('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
             }
         } catch (JWTException $e) {
             // something went wrong whilst attempting to encode the token
-            return $this->error('could not create token', ErrorCodes::TOKEN_CREATION_ERROR);
+            $this->logError('could not create token', ErrorCodes::TOKEN_CREATION_ERROR);
+
+            return response()->json(['success' => false, 'error' => 'Failed to login, please try again.'], 500);
+
         }
 
         // all good so return the token
-        return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
+        return response()->json(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
     }
 
     public function register(Request $request, UserService $service)
@@ -61,9 +64,12 @@ class AuthenticationController extends BaseController
             $user = $service->setUserProperties($user, ['adult' => $data['adult']]);
             $token = $service->getAuthTokenFromUser($user);
 
-            return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
+            return response()->json(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to register, please try again.'], 401);
+
         }
     }
 
@@ -72,11 +78,19 @@ class AuthenticationController extends BaseController
         try {
             $token = JWTAuth::getToken();
             JWTAuth::invalidate($token);
-            Auth::logout();
 
-            return $this->success(['token' => ''], ['Authorization' => '']);
+
+            if(!Auth::logout()){
+                throw new BaseException("Аn error occurred during the logout action", ErrorCodes::AUTHORIZED_CONTENT_ERROR);
+            }
+
+            return response()->json(['token' => ''], ['Authorization' => '']);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+
+            $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to logout, please try again.'], 500);
+
         }
     }
 
@@ -84,12 +98,17 @@ class AuthenticationController extends BaseController
     {
         try {
             $email = $request->input('email');
-            $service->sendResetToken($email);
 
-            return $this->success([]);
+            if($service->sendResetToken($email)){
+                throw new BaseException('Аn error occurred while sending the reset token');
+            }
+            return response()->json([]);
         } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
+            $this->logError($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
                 $exception->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to create reset, please try again.'], 500);
+
         }
     }
 
@@ -101,18 +120,21 @@ class AuthenticationController extends BaseController
             $validator = Validator::make($fields, ['password' => 'required']);
 
             if ($validator->fails()) {
-                return $this->error(
+                throw new BaseException(
                     'Something wrong! Please check and try again!',
-                    ErrorCodes::USER_PASSWORD_RESET_ERROR,
+                    ErrorCodes::AUTHORIZED_CONTENT_ERROR,
                     ['validationErrors' => $validator->errors()]);
             }
 
             $authToken = $service->resetPassword($token, $fields['password']);
 
-            return $this->success(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
+            return response()->json(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
         } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
+             $this->logError($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
                 $exception->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to reset, please try again.'], 500);
+
         }
     }
 
@@ -122,15 +144,17 @@ class AuthenticationController extends BaseController
             $validator = Validator::make($request->all(), ['access_token' => 'required|string']);
 
             if ($validator->fails()) {
-                return $this->error('Provide facebook access token to login!', ErrorCodes::TOKEN_NOT_PROVIDED);
+                throw new BaseException('Provide facebook access token to login!', ErrorCodes::TOKEN_NOT_PROVIDED);
             }
 
             $accessToken = $request->input('access_token');
             $authToken = $service->login($accessToken);
 
-            return $this->success(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
+            return response()->json(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
         } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), $exception->getCode(), $exception->getErrors());
+             $this->logError($exception->getMessage(), $exception->getCode(), $exception->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to facebook login, please try again.'], 500);
         }
     }
 
@@ -146,7 +170,10 @@ class AuthenticationController extends BaseController
             $loginUrl = $service->getLoginUrl($referer);
             return Redirect::to($loginUrl, 301);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to login, please try again.'], 500);
+
         }
     }
 
@@ -159,7 +186,7 @@ class AuthenticationController extends BaseController
             ]);
 
             if ($validator->fails()) {
-                return $this->error('Callback url is not well formed!', ErrorCodes::UNKNOWN_ERROR);
+                throw new BaseException('Callback url is not well formed!', ErrorCodes::UNKNOWN_ERROR);
             }
 
             $accessData = $service->getAccessTokenAndReturnLink($request->input('code'), $request->input('state'));
@@ -167,7 +194,9 @@ class AuthenticationController extends BaseController
             return Redirect::to($accessData['return_link'] . '?token=' . $accessData['token'],
                 301, ['Authorization' => 'Bearer ' . $accessData['token']]);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to linkedin login, please try again.'], 500);
         }
     }
 
@@ -177,9 +206,15 @@ class AuthenticationController extends BaseController
             $user = $service->confirmUser($token);
             $token = $service->getAuthTokenFromUser($user);
 
+            if($user && $token){
+                throw new BaseException('AUser auth token error', ErrorCodes::AUTHORIZED_CONTENT_ERROR);
+
+            }
             return Redirect::to(secure_url('/') . '?token=' . $token);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
+
+            return response()->json(['success' => false, 'error' => 'Failed to confirm, please try again.'], 500);
         }
     }
 
@@ -201,4 +236,11 @@ class AuthenticationController extends BaseController
 
         return false;
     }
+
+    private function logError($errorMessage, $errorCode, $errors = null){
+
+        \Log::error('AuthenticationController error::'. $errorMessage . 'code::'. $errorCode . 'additional info::' . $errors);
+
+    }
+
 }

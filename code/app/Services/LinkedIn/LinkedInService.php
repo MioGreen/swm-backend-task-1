@@ -7,6 +7,8 @@ use Happyr\LinkedIn\LinkedIn;
 use Http\Adapter\Guzzle6\Client;
 use Http\Message\MessageFactory\GuzzleMessageFactory;
 use Ramsey\Uuid\Uuid;
+use SailWithMe\Constants\ErrorCodes;
+use SailWithMe\Exceptions\BaseException;
 use SailWithMe\Exceptions\LinkedInServiceException;
 use SailWithMe\Repositories\LinkedInTemporaryAuthDataRepository;
 use SailWithMe\Repositories\Mongo\UserRepository;
@@ -56,6 +58,11 @@ class LinkedInService
             'uuid' => Uuid::uuid4()->toString(),
             'return_link' => $returnLink
         ]);
+
+        if(!$entity){
+            throw new BaseException('Аn error occurred while creating entity', ErrorCodes::ENTITY_SAVE_ERROR);
+        }
+
         $urlData = [
             'response_type' => 'code',
             'client_id' => config('linkedin.app-id'),
