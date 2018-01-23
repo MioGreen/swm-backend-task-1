@@ -2,52 +2,71 @@
 
 namespace SailWithMe\Http\Controllers\Api;
 
+
 use Auth;
-use Illuminate\Http\Request;
 use JWTAuth;
-use Redirect;
+
+use Validator;
+
+use Illuminate\Http\Request;
 use SailWithMe\Constants\ErrorCodes;
+use SailWithMe\Services\UserService;
 use SailWithMe\Exceptions\BaseException;
+use Tymon\JWTAuth\Exceptions\JWTException;
+use SailWithMe\Http\Requests\RegisterRequest;
+use Illuminate\Validation\ValidationException;
 use SailWithMe\Services\Facebook\FacebookService;
 use SailWithMe\Services\LinkedIn\LinkedInService;
-use SailWithMe\Services\UserService;
-use Tymon\JWTAuth\Exceptions\JWTException;
-use Validator;
+
+
+
+
 
 class AuthenticationController extends BaseController
 {
+    /**
+     * @param Request $request
+     * @return mixed
+     */
     public function login(Request $request)
     {
-        // grab credentials from the request
-        $credentials = $request->only('email', 'password');
-
         try {
+            // grab credentials from the request
+            $credentials = $request->only('email', 'password');
+
+            $this->validate($request, [
+               'email'    => 'required|string',
+               'password' => 'required|string|min:6'
+            ]);
+
             // attempt to verify the credentials and create a token for the user
             if (!$token = JWTAuth::attempt($credentials)) {
-                return $this->error('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
+               throw new JWTException('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
             }
+
+            // all good so return the token
+            return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
+
+
         } catch (JWTException $e) {
             // something went wrong whilst attempting to encode the token
             return $this->error('could not create token', ErrorCodes::TOKEN_CREATION_ERROR);
+        } catch(ValidationException $e) {
+            return $this->error('validation error', ErrorCodes::VALIDATION_ERROR);
         }
 
-        // all good so return the token
-        return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
+
     }
 
-    public function register(Request $request, UserService $service)
+    /**
+     * Registration method (created request class @SailWithMe\Http\Requests\RegisterRequest)
+     * @param RegisterRequest $request
+     * @param UserService $service
+     * @return mixed
+     */
+    public function register(RegisterRequest $request, UserService $service)
     {
         try {
-            //getting post data
-            $validator = Validator::make($request->all(), [
-                'is_adult' => 'required|accepted',
-                'policy_acception' => 'required|accepted',
-            ]);
-
-            if ($validator->fails()) {
-                throw new BaseException("You must be at least 18 years old and accept projects policy!");
-            }
-
             $data = $request->only(['email', 'password', 'gender', 'adult', 'alias']);
 
             //creating user
@@ -61,128 +80,184 @@ class AuthenticationController extends BaseController
             $user = $service->setUserProperties($user, ['adult' => $data['adult']]);
             $token = $service->getAuthTokenFromUser($user);
 
+            if (!$token) {
+                throw new BaseException('could not get token', ErrorCodes::TOKEN_NOT_PROVIDED);
+            }
+
             return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
-        } catch (BaseException $e) {
+
+        }catch (BaseException $e) {
             return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
+    /**
+     * Logout
+     * @return mixed
+     */
     public function logout()
     {
         try {
             $token = JWTAuth::getToken();
             JWTAuth::invalidate($token);
-            Auth::logout();
 
-            return $this->success(['token' => ''], ['Authorization' => '']);
+            if(Auth::logout()){
+                return $this->success(['token' => ''], ['Authorization' => '']);
+            }
+
+            throw new BaseException('Error logout action', ErrorCodes::AUTHORIZED_CONTENT_ERROR);
+
         } catch (BaseException $e) {
             return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
+    /**
+     * @param Request $request
+     * @param UserService $service
+     * @return mixed
+     */
     public function createReset(Request $request, UserService $service)
     {
         try {
             $email = $request->input('email');
-            $service->sendResetToken($email);
+            if(!$service->sendResetToken($email)){
+                throw new BaseException('Error sending reset token', ErrorCodes::USER_PASSWORD_RESET_ERROR);
+            }
 
             return $this->success([]);
-        } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
-                $exception->getErrors());
+
+        } catch (BaseException $e) {
+            return $this->error($e->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR, $e->getErrors());
         }
     }
 
+    /**
+     * @param string $token
+     * @param Request $request
+     * @param UserService $service
+     * @return mixed
+     */
     public function reset(string $token, Request $request, UserService $service)
     {
         try {
-            $fields = $request->only('password');
+            $password = $request->input('password');
+            $this->validate($request, [
+                'password' => 'required'
+            ]);
 
-            $validator = Validator::make($fields, ['password' => 'required']);
-
-            if ($validator->fails()) {
-                return $this->error(
-                    'Something wrong! Please check and try again!',
-                    ErrorCodes::USER_PASSWORD_RESET_ERROR,
-                    ['validationErrors' => $validator->errors()]);
-            }
-
-            $authToken = $service->resetPassword($token, $fields['password']);
+            $authToken = $service->resetPassword($token, $password);
 
             return $this->success(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
-        } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
-                $exception->getErrors());
+
+        } catch (ValidationException $e) {
+            return $this->error(
+                'Something wrong! Please check and try again!',
+                ErrorCodes::USER_PASSWORD_RESET_ERROR
+            );
         }
     }
 
+    /**
+     * @param Request $request
+     * @param FacebookService $service
+     * @return mixed
+     */
     public function facebookLogin(Request $request, FacebookService $service)
     {
         try {
-            $validator = Validator::make($request->all(), ['access_token' => 'required|string']);
+            $this->validate($request, ['access_token' => 'required|string']);
 
-            if ($validator->fails()) {
-                return $this->error('Provide facebook access token to login!', ErrorCodes::TOKEN_NOT_PROVIDED);
-            }
 
             $accessToken = $request->input('access_token');
             $authToken = $service->login($accessToken);
 
             return $this->success(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
-        } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), $exception->getCode(), $exception->getErrors());
+
+        } catch (ValidationException $exception) {
+            return $this->error('Provide facebook access token to login!', ErrorCodes::TOKEN_NOT_PROVIDED);
         }
     }
 
+    /**
+     * Link for LinkedIn
+     * @param Request $request
+     * @param LinkedInService $service
+     * @return mixed
+     */
     public function linkedInLoginLink(Request $request, LinkedInService $service)
     {
         try {
             $referer = $request->headers->get('referer');
 
             if (!$this->isValidRefererDomain($referer)) {
-                return Redirect::to(config('app.url'));
+                return redirect(config('app.url'));
             }
 
             $loginUrl = $service->getLoginUrl($referer);
-            return Redirect::to($loginUrl, 301);
+            return redirect($loginUrl, 301);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+             $this->errorLog($e->getMessage(), $e->getCode(), $e->getErrors());
+             return $this->error('Failed to login in LinkedIn');
         }
     }
 
+    /**
+     * @param Request $request
+     * @param LinkedInService $service
+     * @return mixed
+     */
     public function linkedInLogin(Request $request, LinkedInService $service)
     {
         try {
-            $validator = Validator::make($request->all(), [
+            $this->validate($request, [
                 'state' => 'required|string',
                 'code' => 'required|string',
             ]);
 
-            if ($validator->fails()) {
-                return $this->error('Callback url is not well formed!', ErrorCodes::UNKNOWN_ERROR);
-            }
 
             $accessData = $service->getAccessTokenAndReturnLink($request->input('code'), $request->input('state'));
+            if(!is_array($accessData)){
+                throw new BaseException('Param access data not array', ErrorCodes::ENTITY_FORMAT_DEPRECATED);
+            }
 
-            return Redirect::to($accessData['return_link'] . '?token=' . $accessData['token'],
+            return redirect($accessData['return_link'] . '?token=' . $accessData['token'],
                 301, ['Authorization' => 'Bearer ' . $accessData['token']]);
+
+        } catch(ValidationException $e){
+            return $this->error('Callback url is not well formed!', ErrorCodes::UNKNOWN_ERROR);
         } catch (BaseException $e) {
             return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
+    /**
+     * @param string $token
+     * @param UserService $service
+     * @return mixed
+     */
     public function confirm(string $token, UserService $service)
     {
         try {
             $user = $service->confirmUser($token);
             $token = $service->getAuthTokenFromUser($user);
+            if(!$user) {
+                throw new BaseException("User not confirmed", ErrorCodes::AUTHORIZED_CONTENT_ERROR);
+            }
+            if(!$token){
+                throw new BaseException("Token not confirmed", ErrorCodes::AUTHORIZED_CONTENT_ERROR);
+            }
 
-            return Redirect::to(secure_url('/') . '?token=' . $token);
+            return redirect(secure_url('/') . '?token=' . $token);
         } catch (BaseException $e) {
             return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
+    /**
+     * @param $referer
+     * @return bool
+     */
     private function isValidRefererDomain($referer)
     {
         $domainUrl = config('app.url');
