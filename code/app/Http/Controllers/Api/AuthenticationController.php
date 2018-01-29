@@ -4,6 +4,7 @@ namespace SailWithMe\Http\Controllers\Api;
 
 use Auth;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use JWTAuth;
 use Redirect;
 use SailWithMe\Constants\ErrorCodes;
@@ -16,23 +17,24 @@ use Validator;
 
 class AuthenticationController extends BaseController
 {
+
     public function login(Request $request)
     {
-        // grab credentials from the request
-        $credentials = $request->only('email', 'password');
-
         try {
-            // attempt to verify the credentials and create a token for the user
+        	// grab credentials from the request
+	        $credentials = $request->only('email', 'password');
+
+	        // attempt to verify the credentials and create a token for the user
             if (!$token = JWTAuth::attempt($credentials)) {
-                return $this->error('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
+                return $this->logError('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
             }
         } catch (JWTException $e) {
             // something went wrong whilst attempting to encode the token
-            return $this->error('could not create token', ErrorCodes::TOKEN_CREATION_ERROR);
+            return $this->logError('could not create token', ErrorCodes::TOKEN_CREATION_ERROR);
         }
 
         // all good so return the token
-        return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
+        return $this->sendToken($token);
     }
 
     public function register(Request $request, UserService $service)
@@ -61,9 +63,9 @@ class AuthenticationController extends BaseController
             $user = $service->setUserProperties($user, ['adult' => $data['adult']]);
             $token = $service->getAuthTokenFromUser($user);
 
-            return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
+            return $this->sendToken($token);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            return $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
@@ -74,9 +76,9 @@ class AuthenticationController extends BaseController
             JWTAuth::invalidate($token);
             Auth::logout();
 
-            return $this->success(['token' => ''], ['Authorization' => '']);
+            return $this->sendToken();
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            return $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
@@ -86,9 +88,9 @@ class AuthenticationController extends BaseController
             $email = $request->input('email');
             $service->sendResetToken($email);
 
-            return $this->success([]);
+            return $this->sendToken();
         } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
+            return $this->logError($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
                 $exception->getErrors());
         }
     }
@@ -101,7 +103,7 @@ class AuthenticationController extends BaseController
             $validator = Validator::make($fields, ['password' => 'required']);
 
             if ($validator->fails()) {
-                return $this->error(
+                return $this->logError(
                     'Something wrong! Please check and try again!',
                     ErrorCodes::USER_PASSWORD_RESET_ERROR,
                     ['validationErrors' => $validator->errors()]);
@@ -109,9 +111,9 @@ class AuthenticationController extends BaseController
 
             $authToken = $service->resetPassword($token, $fields['password']);
 
-            return $this->success(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
+            return $this->sendToken($authToken);
         } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
+            return $this->logError($exception->getMessage(), ErrorCodes::USER_PASSWORD_RESET_ERROR,
                 $exception->getErrors());
         }
     }
@@ -122,31 +124,31 @@ class AuthenticationController extends BaseController
             $validator = Validator::make($request->all(), ['access_token' => 'required|string']);
 
             if ($validator->fails()) {
-                return $this->error('Provide facebook access token to login!', ErrorCodes::TOKEN_NOT_PROVIDED);
+                return $this->logError('Provide facebook access token to login!', ErrorCodes::TOKEN_NOT_PROVIDED);
             }
 
             $accessToken = $request->input('access_token');
             $authToken = $service->login($accessToken);
 
-            return $this->success(['token' => $authToken], ['Authorization' => 'Bearer ' . $authToken]);
+            return $this->sendToken($authToken);
         } catch (BaseException $exception) {
-            return $this->error($exception->getMessage(), $exception->getCode(), $exception->getErrors());
+            return $this->logError($exception->getMessage(), $exception->getCode(), $exception->getErrors());
         }
     }
 
     public function linkedInLoginLink(Request $request, LinkedInService $service)
     {
         try {
-            $referer = $request->headers->get('referer');
+            $referrer = $request->headers->get('referrer');
 
-            if (!$this->isValidRefererDomain($referer)) {
-                return Redirect::to(config('app.url'));
+            if (!$this->isValidRefererDomain($referrer)) {
+                return redirect(config('app.url'));
             }
 
-            $loginUrl = $service->getLoginUrl($referer);
-            return Redirect::to($loginUrl, 301);
+            $loginUrl = $service->getLoginUrl($referrer);
+            return redirect($loginUrl, 301);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            return $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
@@ -159,15 +161,15 @@ class AuthenticationController extends BaseController
             ]);
 
             if ($validator->fails()) {
-                return $this->error('Callback url is not well formed!', ErrorCodes::UNKNOWN_ERROR);
+                return $this->logError('Callback url is not well formed!', ErrorCodes::UNKNOWN_ERROR);
             }
 
             $accessData = $service->getAccessTokenAndReturnLink($request->input('code'), $request->input('state'));
 
-            return Redirect::to($accessData['return_link'] . '?token=' . $accessData['token'],
+            return redirect($accessData['return_link'] . '?token=' . $accessData['token'],
                 301, ['Authorization' => 'Bearer ' . $accessData['token']]);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            return $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
@@ -177,22 +179,22 @@ class AuthenticationController extends BaseController
             $user = $service->confirmUser($token);
             $token = $service->getAuthTokenFromUser($user);
 
-            return Redirect::to(secure_url('/') . '?token=' . $token);
+            return redirect(secure_url('/') . '?token=' . $token);
         } catch (BaseException $e) {
-            return $this->error($e->getMessage(), $e->getCode(), $e->getErrors());
+            return $this->logError($e->getMessage(), $e->getCode(), $e->getErrors());
         }
     }
 
-    private function isValidRefererDomain($referer)
+    private function isValidRefererDomain($referrer)
     {
         $domainUrl = config('app.url');
 
-        if (!$referer || strpos($referer, 'http://localhost:3000/') === 0) {
+        if ( !$referrer || strpos($referrer, 'http://localhost:3000/') === 0) {
             return true;
         }
 
-        if (strpos($referer, $domainUrl) == 0) {
-            $uri = str_replace($domainUrl, '', $referer);
+        if ( strpos($referrer, $domainUrl) == 0) {
+            $uri = str_replace($domainUrl, '', $referrer);
 
             if ($uri[0] == '/') {
                 return true;
@@ -201,4 +203,17 @@ class AuthenticationController extends BaseController
 
         return false;
     }
+	
+	protected function logError($message, $errorCode, $errors = []) {
+		Log::info(
+			$message,
+			array_merge([ 'code' => $errorCode ], $errors)
+		);
+
+		return $this->error($message, $errorCode, $errors);
+	}
+
+	protected function sendToken($token = '') {
+		return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
+	}
 }
