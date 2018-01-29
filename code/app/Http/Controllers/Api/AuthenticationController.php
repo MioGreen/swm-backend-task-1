@@ -18,10 +18,10 @@ class AuthenticationController extends BaseController
 {
     public function login(Request $request)
     {
-        // grab credentials from the request
-        $credentials = $request->only('email', 'password');
-
         try {
+            // grab credentials from the request
+            $credentials = $request->only('email', 'password');
+
             // attempt to verify the credentials and create a token for the user
             if (!$token = JWTAuth::attempt($credentials)) {
                 return $this->error('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
@@ -159,7 +159,7 @@ class AuthenticationController extends BaseController
             ]);
 
             if ($validator->fails()) {
-                return $this->error('Callback url is not well formed!', ErrorCodes::UNKNOWN_ERROR);
+                return $this->error('Callback url is not well formed!', ErrorCodes::VALIDATION_ERROR);
             }
 
             $accessData = $service->getAccessTokenAndReturnLink($request->input('code'), $request->input('state'));
@@ -201,4 +201,11 @@ class AuthenticationController extends BaseController
 
         return false;
     }
+    
+    // Log errors
+    public function error($message, $code, $errors = null)
+    {
+        \Log::error("Error $code: $message" , ['errors' => $errors]);
+        parent::error($message, $code, $errors);
+    }   
 }
