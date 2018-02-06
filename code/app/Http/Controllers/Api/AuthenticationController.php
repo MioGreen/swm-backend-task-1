@@ -26,13 +26,13 @@ class AuthenticationController extends BaseController
             if (!$token = JWTAuth::attempt($credentials)) {
                 return $this->error('invalid credentials', ErrorCodes::TOKEN_NOT_PROVIDED);
             }
+
+            // all good so return the token
+            return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
         } catch (JWTException $e) {
             // something went wrong whilst attempting to encode the token
             return $this->error('could not create token', ErrorCodes::TOKEN_CREATION_ERROR);
         }
-
-        // all good so return the token
-        return $this->success(['token' => $token], ['Authorization' => 'Bearer ' . $token]);
     }
 
     public function register(Request $request, UserService $service)
